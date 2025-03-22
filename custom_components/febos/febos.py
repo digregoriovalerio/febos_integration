@@ -14,6 +14,57 @@ from homeassistant.const import (
 
 from .const import DOMAIN, LOGGER
 
+SLAVE_RESOURCE_MAPPING = {
+    "callTemp": {
+        "id": "S01",
+        "name": "Chiamata Temperatura",
+        "type": Platform.BINARY_SENSOR,
+        "class": BinarySensorDeviceClass.HEAT,
+    },
+    "callHumid": {
+        "id": "S02",
+        "name": "Chiamata Umidità",
+        "type": Platform.BINARY_SENSOR,
+        "class": BinarySensorDeviceClass.HEAT,
+    },
+    "stagione": {
+        "id": "S03",
+        "name": "Stagione",
+        "type": Platform.BINARY_SENSOR,
+        "class": BinarySensorDeviceClass.COLD,
+    },
+    "setTemp": {
+        "id": "S04",
+        "name": "Set Temperatura",
+        "type": Platform.SENSOR,
+        "class": SensorDeviceClass.TEMPERATURE,
+        "state": SensorStateClass.MEASUREMENT,
+        "unit": UnitOfTemperature.CELSIUS,
+    },
+    "temp": {
+        "id": "S05",
+        "name": "Temperatura",
+        "type": Platform.SENSOR,
+        "class": SensorDeviceClass.TEMPERATURE,
+        "state": SensorStateClass.MEASUREMENT,
+        "unit": UnitOfTemperature.CELSIUS,
+    },
+    "humid": {
+        "id": "S06",
+        "name": "Umidità",
+        "type": Platform.SENSOR,
+        "class": SensorDeviceClass.HUMIDITY,
+        "state": SensorStateClass.MEASUREMENT,
+        "unit": PERCENTAGE,
+    },
+    "confort": {
+        "id": "S07",
+        "name": "Comfort",
+        "type": Platform.BINARY_SENSOR,
+        "class": BinarySensorDeviceClass.PRESENCE,
+    },
+}
+
 
 def resource_key(
     installation_id: int,
@@ -23,7 +74,17 @@ def resource_key(
     code: str,
 ) -> str:
     """Return a unique identifier for a resource."""
-    return f"{DOMAIN}_{installation_id}_{device_id}_{thing_id}_{code}"
+    return f"{DOMAIN}_{installation_id}_{device_id}_{thing_id}_{code.lower()}"
+
+
+def slave_resource_key(
+    installation_id: int,
+    device_id: int,
+    slave_addr: int,
+    key: str,
+) -> str:
+    """Return a unique identifier for a slave resource."""
+    return f"{DOMAIN}_{installation_id}_{device_id}_{slave_addr}_{key.lower()}"
 
 
 def parse_group_code(code: str) -> str:
@@ -142,12 +203,28 @@ class FebosData:
         return dev
 
     @staticmethod
-    def parse_slave(slave):
+    def parse_slave(slave, device):
         """Parse an EmmeTI Febos slave."""
-        LOGGER.debug(
-            f"[SLAVE][{slave['indirizzoSlave']}] {slave['temp'] / 10} °C, {slave['humid']}% ({slave['setTemp'] / 10} °C)"
-        )
-        return slave
+        slv = {
+            "id": slave["indirizzoSlave"],
+            "name": f"{device['model']} Slave {slave['indirizzoSlave']}",
+            "resources": {},
+        }
+        for k in slave:
+            if k in SLAVE_RESOURCE_MAPPING:
+                sensor = SLAVE_RESOURCE_MAPPING.get(k).copy()
+                sensor["key"] = slave_resource_key(
+                    device["installation_id"], device["id"], slave["indirizzoSlave"], k
+                )
+                sensor["value"] = None
+                if sensor["type"] == Platform.BINARY_SENSOR:
+                    sensor["value_fn"] = lambda s=sensor: binary_sensor_value(s)
+                    LOGGER.debug(f"[BINARY_SENSOR][{sensor['key']}] {sensor}")
+                else:
+                    sensor["value_fn"] = lambda s=sensor: sensor_value(s)
+                    LOGGER.debug(f"[SENSOR][{sensor['key']}] {sensor}")
+                slv["resources"][k] = sensor
+        return slv
 
     @staticmethod
     def parse_thing(thing):
@@ -233,6 +310,8 @@ class FebosData:
             "R16457",
             "R8989",
             "R8698",
+            "setTemp",
+            "temp",
         ]:
             return float(value) / 10.0
         if code in ["R8684", "R8686", "R8688", "R8690"]:

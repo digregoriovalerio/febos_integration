@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from febos.api import FebosApi
-from febos.errors import AuthenticationError
+from febos.errors import AuthenticationError, FebosError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -42,23 +42,21 @@ class FebosDataUpdateCoordinator(DataUpdateCoordinator):
         LOGGER.debug("Login successful")
         data = {}
         for inst_id in self.api.login_data.get("installationIdList", []):
-            data[inst_id] = {}
-            data[inst_id]["devices"] = {}
+            data[inst_id] = {"id": inst_id, "devices": {}, "groups": set()}
             response = self.api.page_config(inst_id)
             for device in response.get("deviceMap", {}).values():
                 device = FebosData.parse_device(device)
-                device["slaves"] = []
+                device["slaves"] = {}
                 device["things"] = {}
                 response2 = self.api.get_febos_slave(inst_id, device["id"])
                 for slave in response2:
-                    slave = FebosData.parse_slave(slave)
-                    device["slaves"].append(slave)
+                    slave = FebosData.parse_slave(slave, device)
+                    device["slaves"][slave["id"]] = slave
                 data[inst_id]["devices"][device["id"]] = device
             for thing in response.get("thingMap", {}).values():
                 device_id = thing["deviceId"]
                 thing = FebosData.parse_thing(thing)
                 data[inst_id]["devices"][device_id]["things"][thing["id"]] = thing
-            data[inst_id]["groups"] = set()
             for page in response.get("pageMap", {}).values():
                 for tab in page.get("tabList", []):
                     for widget in tab.get("widgetList", []):
@@ -80,7 +78,7 @@ class FebosDataUpdateCoordinator(DataUpdateCoordinator):
 
     def _fetch_data(self):
         """Update data from EmmeTI Febos webapp."""
-        for inst_id in self.api.login_data.get("installationIdList", []):
+        for inst_id, installation in self.data.items():
             response = self.api.realtime_data(inst_id, self.data[inst_id]["groups"])
             for entry in response:
                 for code, value in entry["data"].items():
@@ -88,6 +86,16 @@ class FebosDataUpdateCoordinator(DataUpdateCoordinator):
                     self.data[inst_id]["devices"][entry["deviceId"]]["things"][
                         entry["thingId"]
                     ]["resources"][code]["value"] = value
+            for device_id, device in installation["devices"].items():
+                response = self.api.get_febos_slave(inst_id, device_id)
+                for slave in response:
+                    for code, value in slave.items():
+                        value = FebosData.parse_value(value, code)
+                        resources = device["slaves"][slave["indirizzoSlave"]][
+                            "resources"
+                        ]
+                        if code in resources:
+                            resources[code]["value"] = value
         LOGGER.debug("Data update")
 
     def fetch_data(self):
@@ -111,6 +119,13 @@ class FebosDataUpdateCoordinator(DataUpdateCoordinator):
                             and resource["value"] is not None
                         ):
                             yield device, thing, resource
+                for slave in device["slaves"].values():
+                    for resource in slave["resources"].values():
+                        if (
+                            resource["type"] == Platform.SENSOR
+                            and resource["value"] is not None
+                        ):
+                            yield device, slave, resource
 
     def get_binary_sensors(self):
         """List all EmmeTI Febos binary sensors."""
@@ -123,6 +138,13 @@ class FebosDataUpdateCoordinator(DataUpdateCoordinator):
                             and resource["value"] is not None
                         ):
                             yield device, thing, resource
+                for slave in device["slaves"].values():
+                    for resource in slave["resources"].values():
+                        if (
+                            resource["type"] == Platform.BINARY_SENSOR
+                            and resource["value"] is not None
+                        ):
+                            yield device, slave, resource
 
     async def _async_setup(self):
         """Set up the coordinator."""

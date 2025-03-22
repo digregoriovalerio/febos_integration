@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pprint import pformat
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
@@ -13,7 +14,7 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, LOGGER
 from .coordinator import FebosConfigEntry, FebosDataUpdateCoordinator
 
 
